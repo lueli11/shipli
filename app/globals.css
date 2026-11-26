@@ -425,3 +425,29 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
 .build-form:has(option[value='railpack']:checked) .docker-only {
   display: none;
 }
+
+/* ---------- Reiter der Projektseite ---------- */
+
+.tabs { display: flex; flex-direction: column; gap: 2px; padding: 0.5rem; }
+.tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 0.45rem 0.75rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.tabs a:hover { background: var(--surface-2); color: var(--ink); }
+.tabs a[aria-current="page"] { background: var(--surface-2); color: var(--ink); border-color: var(--line); }
+.tabs a.danger { color: var(--bad); }
+.tabs .count { font-size: 0.75rem; color: var(--ink-muted); }
+.tabs hr { border: 0; border-top: 2px solid var(--line); margin: 0.3rem 0.25rem; }
+@media (max-width: 767px) {
+  .tabs { flex-direction: row; overflow-x: auto; }
+  .tabs hr, .tabs .count { display: none; }
+}

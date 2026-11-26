@@ -139,7 +139,7 @@ export async function addDomainAction(form: FormData) {
   } catch (err) {
     return withError(`/projects/${projectId}`, err, 'domains', name);
   }
-  redirect(`/projects/${projectId}#domains`);
+  redirect(`/projects/${projectId}?tab=domains`);
 }
 
 export async function primaryDomainAction(form: FormData) {
@@ -150,7 +150,7 @@ export async function primaryDomainAction(form: FormData) {
   } catch (err) {
     return withError(`/projects/${projectId}`, err, 'domains');
   }
-  redirect(`/projects/${projectId}#domains`);
+  redirect(`/projects/${projectId}?tab=domains`);
 }
 
 export async function removeDomainAction(form: FormData) {
@@ -161,7 +161,7 @@ export async function removeDomainAction(form: FormData) {
   } catch (err) {
     return withError(`/projects/${projectId}`, err, 'domains');
   }
-  redirect(`/projects/${projectId}#domains`);
+  redirect(`/projects/${projectId}?tab=domains`);
 }
 
 export async function googleAction(form: FormData) {

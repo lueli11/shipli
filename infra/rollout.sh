@@ -24,6 +24,8 @@ k apply -f - <<<"$manifest" | grep -v unchanged || true
 # beim ersten Mal kommen Longhorn-Volume und Image dazu, das dauert länger
 k -n shipli-system rollout status deploy/shipli --timeout="${SHIPLI_ROLLOUT_TIMEOUT:-300s}"
 k -n shipli-system rollout status deploy/zot-sync --timeout=120s
+# zot startet erst, wenn zot-sync sein Secret zot-zugang angelegt hat
+k -n zot rollout status statefulset/zot --timeout="${SHIPLI_ROLLOUT_TIMEOUT:-300s}"
 # -k: das Zertifikat gibt es erst, wenn DNS und Portweiterleitung stehen. Traefik lädt den neuen Pod erst nach ein
 # paar Sekunden (davor 503), darum bis 60 s warten
 for _ in $(seq 1 12); do

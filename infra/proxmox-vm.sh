@@ -2,13 +2,13 @@
 # Legt auf einem Proxmox-Host eine Shipli-Node aus dem Ubuntu-Cloud-Image an und startet sie.
 # Aufruf: infra/proxmox-vm.sh <proxmox-host|local> <vmid> <name> <ip> <datei-mit-ssh-keys>
 # Netz und Grösse aus der Konfiguration (infra/env.sh): SHIPLI_GATEWAY, SHIPLI_PREFIX (24), SHIPLI_BRIDGE (vmbr0),
-# SHIPLI_VLAN (leer = ohne), SHIPLI_STORAGE (local-lvm), SHIPLI_DNS (Gateway), SHIPLI_VM_CORES/MEMORY/DISK (4, 8192, 40G).
+# SHIPLI_VLAN (leer = ohne), SHIPLI_STORAGE (local-lvm), SHIPLI_DNS (Gateway), SHIPLI_VM_CORES/MEMORY/DISK (4, 8192, 60G).
 # Gibt es die VM-ID schon, bricht das Skript ab, ohne etwas anzufassen.
 set -euo pipefail
 host=$1 vmid=$2 name=$3 ip=$4 keys=$5
 . "$(dirname "$0")/env.sh"
 args=("$vmid" "$name" "$ip/${SHIPLI_PREFIX:-24}" "$SHIPLI_GATEWAY" "${SHIPLI_DNS:-$SHIPLI_GATEWAY}" "${SHIPLI_BRIDGE:-vmbr0}" "${SHIPLI_VLAN:-}"
-  "${SHIPLI_STORAGE:-local-lvm}" "${SHIPLI_VM_CORES:-4}" "${SHIPLI_VM_MEMORY:-8192}" "${SHIPLI_VM_DISK:-40G}")
+  "${SHIPLI_STORAGE:-local-lvm}" "${SHIPLI_VM_CORES:-4}" "${SHIPLI_VM_MEMORY:-8192}" "${SHIPLI_VM_DISK:-60G}")
 # ssh setzt die Argumente zu einer Zeile zusammen, darum %q (sonst fiele ein leeres VLAN weg)
 on() { if [ "$host" = local ]; then bash -s -- "$@"; else ssh -o BatchMode=yes "root@$host" "bash -s -- $(printf '%q ' "$@")"; fi; }
 

@@ -134,7 +134,7 @@ configure() {
   yesno "Shipli $SHIPLI_VERSION installieren?
 
 VMs:        $(for i in "${!nodes[@]}"; do printf '%s-%s (%s) auf %s, ' "$SHIPLI_NAME" $((i + 1)) "${nodes[i]}" "${pve[i]}"; done | sed 's/, $//')
-Je VM:      ${SHIPLI_VM_CORES:-4} Kerne, ${SHIPLI_VM_MEMORY:-8192} MB RAM, ${SHIPLI_VM_DISK:-40G} Disk
+Je VM:      ${SHIPLI_VM_CORES:-4} Kerne, ${SHIPLI_VM_MEMORY:-8192} MB RAM, ${SHIPLI_VM_DISK:-60G} Disk
 API / Eingang: $SHIPLI_API_VIP / $SHIPLI_INGRESS_IP
 Oberfläche: https://$SHIPLI_HOST (Admin $SHIPLI_ADMIN_EMAIL)" || die "abgebrochen"
   save

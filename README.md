@@ -33,7 +33,7 @@ It asks a few questions, then:
 You need:
 
 - Proxmox VE 8 or newer
-- 4 cores, 8 GB RAM and 40 GB disk per VM (override with `SHIPLI_VM_CORES`, `SHIPLI_VM_MEMORY`, `SHIPLI_VM_DISK`)
+- 4 cores, 8 GB RAM and 60 GB disk per VM (override with `SHIPLI_VM_CORES`, `SHIPLI_VM_MEMORY`, `SHIPLI_VM_DISK`; below 40 GB Longhorn has no room for the registry)
 - one free static IP per VM, plus two more IPs in the same network: one for the Kubernetes API and one for ingress
 - a public IPv4 address
 

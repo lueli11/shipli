@@ -1,0 +1,19 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: longhorn
+  namespace: kube-system
+spec:
+  repo: https://charts.longhorn.io
+  chart: longhorn
+  version: 1.13.0
+  targetNamespace: longhorn-system
+  createNamespace: true
+  valuesContent: |-
+    persistence:
+      defaultClass: true
+      defaultClassReplicaCount: ${SHIPLI_REPLICAS}
+    defaultSettings:
+      defaultReplicaCount: ${SHIPLI_REPLICAS}
+      # Fällt eine Node aus, Pods mit Volume zwangsweise löschen; sonst ziehen Postgres & Co. nie um
+      nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod

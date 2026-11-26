@@ -1,0 +1,114 @@
+# Modus "hinter bestehendem Proxy" mit Traefik (Kubernetes-CRDs): kommt in den Cluster, dessen Traefik am Router
+# 80/443 bekommt. Konkrete Hosts dieses Traefik haben Vorrang; nur unbekannte Domains gehen an Shipli.
+# HTTPS wird nicht entschlüsselt (Passthrough), Shipli holt seine Zertifikate selbst.
+# Anpassen: 10.0.80.20 = SHIPLI_INGRESS_IP, example.com = eigene Domains des Proxys, shipli.example.com = SHIPLI_HOST.
+# In Shipli SHIPLI_TRUSTED_IPS auf die IPs dieses Traefik setzen. Entfernen: kubectl delete -f <diese Datei>
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shipli-eingang
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipli
+  namespace: shipli-eingang
+spec:
+  ports:
+    - { name: http, port: 80, targetPort: 80 }
+    - { name: https, port: 443, targetPort: 443 }
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: shipli
+  namespace: shipli-eingang
+  labels:
+    kubernetes.io/service-name: shipli
+addressType: IPv4
+ports:
+  - { name: http, port: 80, protocol: TCP }
+  - { name: https, port: 443, protocol: TCP }
+endpoints:
+  # ohne ready: true lässt Traefik den Endpunkt weg und schliesst die Verbindung
+  - addresses: ["10.0.80.20"]
+    conditions:
+      ready: true
+---
+# Echte Client-IP: Shipli bekommt per PROXY-Protokoll v2 die Absender-IP vor den TLS-Daten.
+# Shipli glaubt das nur den IPs in SHIPLI_TRUSTED_IPS (infra/manifests/traefik-config.yaml).
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransportTCP
+metadata:
+  name: proxy-v2
+  namespace: shipli-eingang
+spec:
+  proxyProtocol:
+    version: 2
+---
+# Kein HostSNI(`*`): HTTPS-Router mit HostRegexp (z. B. von Dokploy) zählen bei der SNI-Zuordnung als
+# Catch-all und werden vor einem TCP-Catch-all geprüft. Deshalb ein TCP-Router mit Regex, der die eigenen
+# Domains ausschliesst. HTTPS-Router mit konkretem Host haben trotzdem Vorrang.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: shipli-https
+  namespace: shipli-eingang
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: HostSNIRegexp(`^.+$`) && !HostSNIRegexp(`^(.+\.)?example\.com$`)
+      services:
+        - name: shipli
+          port: 443
+          serversTransport: proxy-v2
+  tls:
+    passthrough: true
+---
+# Port 80 für fremde Domains (cert-manager HTTP-01). Eigene Domains ausgenommen, die bedient der Proxy selbst.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: shipli-http
+  namespace: shipli-eingang
+spec:
+  entryPoints: [web]
+  routes:
+    - match: HostRegexp(`.+`) && !HostRegexp(`^(.+\.)?example\.com$`)
+      priority: 1
+      kind: Rule
+      services:
+        - name: shipli
+          port: 80
+---
+# Die Shipli-Oberfläche selbst liegt unter einer eigenen Domain; konkrete Regeln, damit sie vor
+# einer Weiterleitung auf HTTPS (Priorität 1) und anderen Catch-alls kommen. Zertifikat holt Shipli selbst.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: shipli-oberflaeche
+  namespace: shipli-eingang
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: HostSNI(`shipli.example.com`)
+      services:
+        - name: shipli
+          port: 443
+          serversTransport: proxy-v2
+  tls:
+    passthrough: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: shipli-oberflaeche-http
+  namespace: shipli-eingang
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`shipli.example.com`)
+      kind: Rule
+      services:
+        - name: shipli
+          port: 80

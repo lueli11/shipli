@@ -1,0 +1,391 @@
+# Shipli selbst. Vorlage: ${SHIPLI_*} füllt infra/render.sh aus der Konfiguration (install/shipli.env.example).
+# Secrets shipli-db, zot-konten, zot-read und shipli-admin legt der Installer an.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shipli-system
+---
+# Namespace der Builds (Policy weiter unten); vor den Roles von zot-sync, die hier hineinkommen
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shipli-builds
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shipli
+  namespace: shipli-system
+---
+# Clusterweit, weil Shipli Namespaces pro User anlegt. Geschrieben werden darf nur in shipli-u-* und
+# shipli-builds (Policy shipli-nur-eigene-namespaces unten). Secrets kann Shipli nirgends lesen.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: shipli
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, create, patch, delete]
+  # dauerhafte Ordner der Projekte (Phase 5.5)
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, patch, delete]
+  - apiGroups: [""]
+    resources: [resourcequotas, limitranges]
+    verbs: [get, create, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, create, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, create, patch]
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get, create, patch, delete]
+  # Google-Bestätigung: Service ohne Selector im User-Namespace zeigt auf die ClusterIP von Shipli
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [create, patch]
+  # Messung: Shipli fragt die Kubelets direkt; bewusst nicht nodes/proxy, das erlaubt exec in jeden Pod
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [nodes/stats]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: shipli
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: shipli }
+subjects: [{ kind: ServiceAccount, name: shipli, namespace: shipli-system }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: shipli-system
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: shipli-system
+spec:
+  serviceName: postgres
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata: { labels: { app: postgres } }
+    spec:
+      # toter Node: nach 30 s statt 5 min umziehen (Longhorn hängt das Volume dann um)
+      tolerations:
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+      containers:
+        - name: postgres
+          image: postgres:17.7-alpine3.22
+          env:
+            - { name: POSTGRES_USER, value: shipli }
+            - { name: POSTGRES_DB, value: shipli }
+            - { name: POSTGRES_PASSWORD, valueFrom: { secretKeyRef: { name: shipli-db, key: password } } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ containerPort: 5432 }]
+          readinessProbe: { exec: { command: [pg_isready, -U, shipli] }, periodSeconds: 5 }
+          resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 5Gi } } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shipli
+  namespace: shipli-system
+spec:
+  replicas: 1 # Builds laufen im Prozess (after()), zwei Replikas würden sich nicht kennen
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: shipli } }
+  template:
+    metadata: { labels: { app: shipli } }
+    spec:
+      # toter Node: nach 30 s statt 5 min umziehen (Longhorn hängt das Volume dann um)
+      tolerations:
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+      serviceAccountName: shipli
+      containers:
+        - name: shipli
+          image: ${SHIPLI_IMAGE}
+          env:
+            - { name: DB_PASSWORD, valueFrom: { secretKeyRef: { name: shipli-db, key: password } } }
+            - { name: DATABASE_URL, value: "postgres://shipli:$(DB_PASSWORD)@postgres:5432/shipli" }
+            - { name: SHIPLI_APP_URL, value: "https://${SHIPLI_HOST}" }
+            - { name: SHIPLI_DOMAIN, value: "${SHIPLI_DOMAIN}" }
+            - { name: SHIPLI_BLOCKED_DOMAINS, value: "${SHIPLI_BLOCKED_DOMAINS}" }
+            - { name: SHIPLI_REGISTRY_PUSH, value: "zot.zot.svc.cluster.local:5000" }
+            - { name: SHIPLI_REGISTRY_PULL, value: "localhost:30500" }
+            - { name: SHIPLI_PUBLIC_IP, value: "${SHIPLI_PUBLIC_IP}" }
+            # zum Ausprobieren letsencrypt-staging (Rate-Limits: 5 Fehlversuche pro Stunde und Host)
+            - { name: SHIPLI_CERT_ISSUER, value: "letsencrypt" }
+            # Leserecht in zot für die Imagegrösse unter „Nutzung“; ohne Secret fehlt nur diese Zahl
+            - name: SHIPLI_REGISTRY_READ_AUTH
+              valueFrom: { secretKeyRef: { name: zot-read, key: auth, optional: true } }
+            # erster Admin beim allerersten Start, danach ohne Wirkung (instrumentation.ts)
+            - name: SHIPLI_ADMIN_EMAIL
+              valueFrom: { secretKeyRef: { name: shipli-admin, key: email, optional: true } }
+            - name: SHIPLI_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: shipli-admin, key: password, optional: true } }
+          ports: [{ containerPort: 3000 }]
+          readinessProbe: { httpGet: { path: /login, port: 3000 }, periodSeconds: 5 }
+          resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+---
+# zot-Konten pro User (scripts/zot-sync.ts). Eigener Service-Account, weil wer zot-zugang schreibt, Rechte in zot
+# vergibt; Shipli selbst darf das nicht. Kann dafür alle Secrets in shipli-builds lesen (RBAC filtert nicht nach Label).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zot-sync
+  namespace: shipli-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-sync
+  namespace: zot
+rules:
+  - { apiGroups: [""], resources: [secrets], resourceNames: [zot-zugang], verbs: [get, update] }
+  # create lässt sich nicht auf einen Namen einschränken
+  - { apiGroups: [""], resources: [secrets], verbs: [create] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-sync
+  namespace: zot
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-sync }
+subjects: [{ kind: ServiceAccount, name: zot-sync, namespace: shipli-system }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zot-sync
+  namespace: shipli-builds
+rules:
+  - { apiGroups: [""], resources: [secrets], verbs: [list, create, delete] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zot-sync
+  namespace: shipli-builds
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: zot-sync }
+subjects: [{ kind: ServiceAccount, name: zot-sync, namespace: shipli-system }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zot-sync
+  namespace: shipli-system
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: zot-sync } }
+  template:
+    metadata: { labels: { app: zot-sync } }
+    spec:
+      tolerations:
+        - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+        - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+      serviceAccountName: zot-sync
+      containers:
+        - name: zot-sync
+          image: ${SHIPLI_IMAGE}
+          command: [node, scripts/zot-sync.ts]
+          env:
+            - { name: DB_PASSWORD, valueFrom: { secretKeyRef: { name: shipli-db, key: password } } }
+            - { name: DATABASE_URL, value: "postgres://shipli:$(DB_PASSWORD)@postgres:5432/shipli" }
+            - { name: ZOT_RELEASE_PASSWORD, valueFrom: { secretKeyRef: { name: zot-konten, key: release } } }
+            - { name: ZOT_PULLER_PASSWORD, valueFrom: { secretKeyRef: { name: zot-konten, key: puller } } }
+          resources: { requests: { cpu: 10m, memory: 64Mi }, limits: { memory: 256Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shipli
+  namespace: shipli-system
+spec:
+  # fest, weil die EndpointSlices der Google-Bestätigung diese IP enthalten; neu angelegt bekäme der Service sonst eine andere
+  clusterIP: 10.43.76.237
+  selector: { app: shipli }
+  ports: [{ port: 80, targetPort: 3000 }]
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-account }
+    solvers: [{ http01: { ingress: { ingressClassName: traefik } } }]
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef: { name: letsencrypt-staging-account }
+    solvers: [{ http01: { ingress: { ingressClassName: traefik } } }]
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: shipli
+  namespace: shipli-system
+spec:
+  secretName: shipli-tls
+  dnsNames: [${SHIPLI_HOST}]
+  issuerRef: { kind: ClusterIssuer, name: letsencrypt }
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: nach-https
+  namespace: shipli-system
+spec:
+  redirectScheme: { scheme: https, permanent: true }
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: shipli
+  namespace: shipli-system
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`${SHIPLI_HOST}`)
+      kind: Rule
+      services: [{ name: shipli, port: 80 }]
+  tls: { secretName: shipli-tls }
+---
+# Port 80: alles nach https, ausser der ACME-Challenge (deren Router von cert-manager ist länger und gewinnt)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: shipli-http
+  namespace: shipli-system
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`${SHIPLI_HOST}`)
+      kind: Rule
+      priority: 10
+      middlewares: [{ name: nach-https }]
+      services: [{ name: shipli, port: 80 }]
+---
+# Ein kompromittiertes Shipli soll nichts ausserhalb der User-Namespaces und shipli-builds anfassen
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: shipli-nur-eigene-namespaces
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: ["*"], apiVersions: ["*"], operations: [CREATE, UPDATE, DELETE], resources: ["*/*"] }
+  matchConditions:
+    - name: nur-shipli
+      expression: request.userInfo.username == 'system:serviceaccount:shipli-system:shipli'
+  validations:
+    - expression: >-
+        request.resource.resource == 'namespaces'
+        ? request.name.startsWith('shipli-u-')
+        : (request.namespace.startsWith('shipli-u-') || request.namespace == 'shipli-builds')
+      message: Shipli darf nur in shipli-u-* und shipli-builds schreiben
+    - expression: >-
+        request.resource.resource != 'namespaces' || request.operation == 'DELETE' ||
+        object.metadata.?labels[?'pod-security.kubernetes.io/enforce'].orValue('') == 'restricted'
+      message: Namespaces von Shipli brauchen PSA restricted
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: shipli-nur-eigene-namespaces
+spec:
+  policyName: shipli-nur-eigene-namespaces
+  validationActions: [Deny]
+---
+# Builds brauchen seccomp und AppArmor Unconfined (rootless BuildKit), darum geht dort kein PSA baseline.
+# Den Rest von baseline prüft diese Policy, damit ein Job in shipli-builds nicht auf den Host kommt.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: shipli-builds-ohne-host
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - { apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [pods] }
+  validations:
+    - expression: "!object.spec.?hostNetwork.orValue(false) && !object.spec.?hostPID.orValue(false) && !object.spec.?hostIPC.orValue(false)"
+      message: kein hostNetwork, hostPID oder hostIPC
+    - expression: object.spec.?volumes.orValue([]).all(v, !has(v.hostPath))
+      message: keine hostPath-Volumes
+    - expression: >-
+        (object.spec.containers + object.spec.?initContainers.orValue([])).all(c,
+        !c.?securityContext.?privileged.orValue(false) &&
+        c.?securityContext.?capabilities.?add.orValue([]).size() == 0 &&
+        c.?ports.orValue([]).all(p, !has(p.hostPort)))
+      message: keine privilegierten Container, zusätzlichen Capabilities oder hostPorts
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: shipli-builds-ohne-host
+spec:
+  policyName: shipli-builds-ohne-host
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels: { kubernetes.io/metadata.name: shipli-builds }
+---
+# Builds: Internet (ohne private Netze), DNS und zot zum Schieben; hinein nichts
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: builds
+  namespace: shipli-builds
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16] } }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: zot } } }]
+      ports: [{ protocol: TCP, port: 5000 }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

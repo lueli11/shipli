@@ -1,0 +1,35 @@
+# Registry für die Builds. Pods schieben nach zot.zot.svc:5000, containerd holt über localhost:30500 (NodePort).
+# Ohne Anmeldung geht nichts; Konten und Konfiguration (src/zot-config.json) legt scripts/zot-sync.ts an.
+# Aufräumen (in infra/zot-config.json): pro Repo die 5 neuesten Tags plus buildcache; Apps laufen per Digest, darum bleiben auch die 3
+# neuesten Images ohne Tag (ein fehlgeschlagener Deploy darf der laufenden App das Image nicht wegnehmen).
+# shortcut: Repos gelöschter Projekte behalten so ihre letzten 5 Images; löschen bräuchte ein zot-Konto mit delete für Shipli
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: zot
+  namespace: kube-system
+spec:
+  repo: https://zotregistry.dev/helm-charts
+  chart: zot
+  version: 0.1.131
+  targetNamespace: zot
+  createNamespace: true
+  valuesContent: |-
+    # toter Node: nach 30 s statt 5 min umziehen, sonst warten alle Apps so lange auf ihr Image
+    tolerations:
+      - { key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+      - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30 }
+    service:
+      type: NodePort
+      port: 5000
+      nodePort: 30500
+    persistence: true
+    pvc:
+      create: true
+      storage: 20Gi
+    # config.json und htpasswd kommen aus dem Secret zot-zugang (scripts/zot-sync.ts); beides in einem Secret,
+    # damit Konto und Recht gleichzeitig ankommen. zot lädt neu, sobald sich config.json ändert (kein Neustart).
+    mountConfig: false
+    externalSecrets:
+      - secretName: zot-zugang
+        mountPath: /etc/zot

@@ -1,0 +1,29 @@
+# Traefik von k3s: auf jeder Node, Eingang über die kube-vip-Adresse ${SHIPLI_INGRESS_IP}
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    deployment:
+      kind: DaemonSet
+    service:
+      annotations:
+        kube-vip.io/loadbalancerIPs: "${SHIPLI_INGRESS_IP}"
+      spec:
+        # Local: kube-proxy schreibt die Absender-IP nicht um, sonst wäre trustedIPs unten wertlos.
+        # Geht, weil Traefik als DaemonSet auf jeder Node läuft, die die VIP halten kann.
+        externalTrafficPolicy: Local
+        # Öffentliche IP: Pods (der Selbsttest von cert-manager) erreichen sie hinter NAT oft nicht (kein Hairpin im
+        # Router), kube-proxy leitet sie so direkt an Traefik. Bei neuer öffentlicher IP anpassen.
+        externalIPs: ["${SHIPLI_PUBLIC_IP}"]
+    # Echte Client-IP hinter einem bestehenden Proxy: der reicht sie auf 443 per PROXY-Protokoll v2 und auf 80 per
+    # X-Forwarded-For weiter. Nur ihm glauben, sonst könnte jeder eine IP vortäuschen. Ohne Proxy: []
+    ports:
+      web:
+        forwardedHeaders:
+          trustedIPs: ${SHIPLI_TRUSTED_IPS}
+      websecure:
+        proxyProtocol:
+          trustedIPs: ${SHIPLI_TRUSTED_IPS}

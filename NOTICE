@@ -1,0 +1,8 @@
+Shipli
+Copyright 2026 Jonas Leuenberger
+
+Teile dieses Projekts stammen aus Dokploy (https://github.com/Dokploy/dokploy),
+Copyright 2026-present Dokploy Technology, Inc., Apache License 2.0:
+
+- app/monitoring/charts.tsx: nach apps/dokploy/components/dashboard/monitoring/paid/servers/
+  (cpu-chart.tsx, memory-chart.tsx, disk-chart.tsx, network-chart.tsx, show-paid-monitoring.tsx)

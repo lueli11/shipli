@@ -1,0 +1,87 @@
+{
+  "distSpecVersion": "1.1.1",
+  "storage": {
+    "rootDirectory": "/var/lib/registry",
+    "gc": true,
+    "gcDelay": "1h",
+    "gcInterval": "24h",
+    "retention": {
+      "dryRun": false,
+      "delay": "24h",
+      "policies": [
+        {
+          "repositories": [
+            "**"
+          ],
+          "deleteReferrers": true,
+          "deleteUntagged": true,
+          "keepTags": [
+            {
+              "patterns": [
+                "^buildcache$"
+              ]
+            },
+            {
+              "mostRecentlyPushedCount": 5
+            }
+          ],
+          "keepUntagged": {
+            "mostRecentlyPushedCount": 3
+          }
+        }
+      ]
+    }
+  },
+  "http": {
+    "address": "0.0.0.0",
+    "port": "5000",
+    "auth": {
+      "htpasswd": {
+        "path": "/etc/zot/htpasswd"
+      },
+      "failDelay": 1
+    },
+    "accessControl": {
+      "repositories": {
+        "**": {
+          "policies": [
+            {
+              "users": [
+                "puller"
+              ],
+              "actions": [
+                "read"
+              ]
+            }
+          ]
+        },
+        "shipli/**": {
+          "policies": [
+            {
+              "users": [
+                "release"
+              ],
+              "actions": [
+                "read",
+                "create",
+                "update",
+                "delete"
+              ]
+            },
+            {
+              "users": [
+                "puller"
+              ],
+              "actions": [
+                "read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "log": {
+    "level": "info"
+  }
+}

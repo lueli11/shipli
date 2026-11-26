@@ -73,7 +73,14 @@ export type Light = { state: 'ok' | 'warten' | 'falsch'; text: string };
 export function dnsLight(answers: Answer[], ip: string): Light {
   const all = answers.filter((a): a is NonNullable<Answer> => a !== null);
   const a = [...new Set(all.flatMap((r) => r.a))];
-  if (a.some(isCloudflare)) return { state: 'falsch', text: 'Cloudflare-Proxy ist an: Wolke auf grau stellen (nur DNS)' };
+  // orange Wolke: der Ursprung ist nicht sichtbar, Let's Encrypt kommt per HTTP-01 durch den Proxy (Cloudflare leitet
+  // /.well-known/acme-challenge/ unverändert an Port 80 weiter); AAAA zeigt dann auf Cloudflare und stört nicht
+  if (a.length && a.every(isCloudflare)) {
+    if (all.length === answers.length && all.every((r) => r.a.length && r.a.every(isCloudflare))) {
+      return { state: 'ok', text: 'über Cloudflare-Proxy, dort SSL/TLS auf „Full (strict)“ stellen' };
+    }
+    return { state: 'warten', text: 'noch nicht überall sichtbar' };
+  }
   const wrong = a.filter((x) => x !== ip);
   if (wrong.length) return { state: 'falsch', text: `zeigt auf ${wrong.join(', ')} statt ${ip}` };
   // Let's Encrypt prüft bevorzugt über IPv6, Shipli ist dort nicht erreichbar

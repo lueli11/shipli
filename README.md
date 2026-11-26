@@ -7,8 +7,8 @@ The interface is in German.
 ## What it does
 
 - Invite-only sign-up; every user works in their own isolated namespace
-- Connect a GitHub repo (private ones too), deploy on every push, no Dockerfile needed (Railpack)
-- Custom domains: Shipli shows the DNS records, checks them and gets the certificate itself
+- Connect a GitHub repo (private ones too), deploy on every push, no Dockerfile needed (Railpack), or build your own Dockerfile with path, context and stage
+- Custom domains: Shipli shows the DNS records, checks them and gets the certificate itself, also behind the Cloudflare proxy (orange cloud, SSL mode "Full (strict)")
 - Redirect between `www` and the apex domain with one click
 - Google Search Console verification by uploading the HTML file
 - CPU, RAM, storage and project limits per user, monitoring for the admin, usage page for each user

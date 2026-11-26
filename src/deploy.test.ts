@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toName, validate, validateEnvKey, validateVolumePath, hostOf, appManifests, buildJob, digestOf } from './deploy.ts';
+import { toName, validate, validateBuild, validateEnvKey, validateVolumePath, hostOf, appManifests, buildJob, digestOf } from './deploy.ts';
 
 const ok = { user: 'nino', project: 'blog', repo: 'https://github.com/lueli11/webseite', limits: { cpu_limit: 1000, memory_limit: 2048, storage_limit: 5120, max_projects: 3, volume_limit: 1024 } };
 
@@ -106,5 +106,26 @@ test('Ordner-Pfad: nur eigene Ordner, nichts vom System oder der Code', () => {
   for (const good of ['/app/data', '/data', '/app/storage/db', '/var/lib/app', '/home/node/.cache']) validateVolumePath(good);
   for (const bad of ['/', 'app/data', '/app', '/app/', '/etc', '/etc/x', '/proc/1', '/usr/local', '/run', '/app/../etc', '/app/./data', '/a b', '/a;rm', '//x', `/${'a'.repeat(200)}`]) {
     assert.throws(() => validateVolumePath(bad), bad);
+  }
+});
+
+test('Dockerfile-Build: Pfad, Kontext, Stage und Variablen als Build-Argumente', () => {
+  const build = { type: 'dockerfile' as const, file: 'docker/web.Dockerfile', context: 'apps/web', target: 'runner' };
+  const pod = buildJob({ ...ok, env: { A: '1' }, build }, 'f'.repeat(40), { env: 'e' }).spec.template.spec;
+  const args = pod.containers[0].args.join(' ');
+  for (const part of ['--frontend=dockerfile.v0', 'context=/work/src/apps/web', 'dockerfile=/work/src/docker', 'filename=web.Dockerfile', 'target=runner', 'id=A,env=A']) assert.ok(args.includes(part), part);
+  assert.ok(!args.includes('railpack') && !args.includes('secrets-hash'));
+  // Werte nie im Job-Spec, nur die Namen
+  assert.ok(!JSON.stringify(pod).includes('build-arg:A='));
+  assert.equal(pod.containers[0].env.find((e: { name: string }) => e.name === 'SHIPLI_BUILD_ARGS')!.value, 'A');
+  assert.equal(pod.initContainers[0].env.find((e: { name: string }) => e.name === 'SHIPLI_DOCKERFILE')!.value, 'docker/web.Dockerfile');
+  const railpack = buildJob(ok, 'f'.repeat(40), { env: 'e' }).spec.template.spec;
+  assert.equal(railpack.containers[0].env.find((e: { name: string }) => e.name === 'SHIPLI_BUILD_ARGS')!.value, '');
+});
+
+test('Dockerfile-Pfade bleiben im Repo', () => {
+  validateBuild({ type: 'dockerfile', file: 'Dockerfile', context: '.' });
+  for (const bad of [{ file: '../x', context: '.' }, { file: '/etc/passwd', context: '.' }, { file: 'Dockerfile', context: 'a/../..' }, { file: 'Dockerfile', context: '.', target: '-x' }]) {
+    assert.throws(() => validateBuild({ type: 'dockerfile', ...bad }), JSON.stringify(bad));
   }
 });

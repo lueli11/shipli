@@ -420,3 +420,8 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
     transition: none !important;
   }
 }
+
+/* Projekt → Build: Dockerfile-Felder nur bei „Dockerfile“, ohne Client-JS */
+.build-form:has(option[value='railpack']:checked) .docker-only {
+  display: none;
+}

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { runtimeLog } from '../../../src/deploy.ts';
 import { getDeployment, getProject, listDeployments, listEnvKeys } from '../../../src/projects.ts';
-import { addDomainAction, deleteProjectAction, deployAction, googleAction, removeVolumeAction, setEnvAction, setVolumeAction, unsetEnvAction } from '../../actions.ts';
+import { addDomainAction, deleteProjectAction, deployAction, googleAction, removeVolumeAction, setBuildAction, setEnvAction, setVolumeAction, unsetEnvAction } from '../../actions.ts';
 import { requireUser } from '../../session.ts';
 import { ErrorBox } from '../../error-box.tsx';
 import { Status } from '../../status.tsx';
@@ -77,7 +77,7 @@ export default async function ProjectPage(props: { params: Promise<{ id: string 
 
       <section id="domains" {...card(2)}>
         <h2 className="label mb-1">Domains</h2>
-        <p className="mb-4 text-sm text-muted">Eigene Domain mit HTTPS. Shipli prüft das DNS alle 5 Sekunden und holt das Zertifikat, sobald es stimmt. Bei Cloudflare die Wolke auf grau stellen.</p>
+        <p className="mb-4 text-sm text-muted">Eigene Domain mit HTTPS. Shipli prüft das DNS alle 5 Sekunden und holt das Zertifikat, sobald es stimmt. Bei Cloudflare geht die orange Wolke, dann SSL/TLS auf „Full (strict)“ stellen.</p>
         {errorIn('domains')}
         <Domains projectId={project.id} deployed={!!project.url} />
         <form action={addDomainAction} className="mt-4 flex flex-wrap items-end gap-3">
@@ -154,6 +154,25 @@ export default async function ProjectPage(props: { params: Promise<{ id: string 
           <input type="hidden" name="projectId" value={project.id} />
           <label className="field min-w-44 flex-1"><span>Name</span><input name="key" placeholder="DATABASE_URL" pattern="[A-Za-z_][A-Za-z0-9_]*" required autoComplete="off" /></label>
           <label className="field min-w-44 flex-1"><span>Wert</span><input name="value" type="password" autoComplete="off" /></label>
+          <Submit className="btn-primary" busy="Speichert …">Speichern</Submit>
+        </form>
+      </section>
+
+      <section id="build" {...card(4)}>
+        <h2 className="label mb-1">Build</h2>
+        <p className="mb-4 text-sm text-muted">Railpack erkennt Sprache und Framework selbst. Mit Dockerfile baut Shipli genau dieses, die Umgebungsvariablen kommen als Build-Argumente (ARG) und Secrets hinein. Die App muss auf <code>$PORT</code> (3000) lauschen. Wirkt ab dem nächsten Deploy.{saved === 'build' && ' Gespeichert.'}</p>
+        {errorIn('build')}
+        <form action={setBuildAction} className="build-form flex flex-wrap items-end gap-3">
+          <input type="hidden" name="projectId" value={project.id} />
+          <label className="field w-40"><span>Build-Art</span>
+            <select name="type" defaultValue={project.dockerfile ? 'dockerfile' : 'railpack'}>
+              <option value="railpack">Railpack</option>
+              <option value="dockerfile">Dockerfile</option>
+            </select>
+          </label>
+          <label className="field docker-only min-w-40 flex-1"><span>Dockerfile</span><input name="file" defaultValue={project.dockerfile ?? 'Dockerfile'} autoComplete="off" spellCheck={false} /></label>
+          <label className="field docker-only min-w-32 flex-1"><span>Kontext</span><input name="context" defaultValue={project.docker_context ?? '.'} autoComplete="off" spellCheck={false} /></label>
+          <label className="field docker-only w-36"><span>Stage (optional)</span><input name="target" defaultValue={project.docker_target ?? ''} autoComplete="off" spellCheck={false} /></label>
           <Submit className="btn-primary" busy="Speichert …">Speichern</Submit>
         </form>
       </section>

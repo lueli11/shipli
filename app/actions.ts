@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { acceptInvite, changePassword, createApiToken, createInvite, deleteSession, login, revokeApiToken } from '../src/auth.ts';
 import { refresh } from 'next/cache';
-import { createProject, deleteAccount, deleteProject, removeVolume, setEnv, setVolume, startDeploy, unsetEnv } from '../src/projects.ts';
+import { createProject, deleteAccount, deleteProject, removeVolume, setBuild, setEnv, setVolume, startDeploy, unsetEnv } from '../src/projects.ts';
 import { addDomains, googleFileFromContent, normalizeDomain, removeDomain, setGoogleVerification, setPrimaryDomain, withWww } from '../src/domains.ts';
 import { setLimits } from '../src/limits.ts';
 import { usage } from '../src/metrics.ts';
@@ -96,6 +96,20 @@ export async function setVolumeAction(form: FormData) {
     return withError(`/projects/${projectId}`, err, 'ordner');
   }
   redirect(`/projects/${projectId}?saved=ordner#ordner`);
+}
+
+export async function setBuildAction(form: FormData) {
+  const user = await requireUser();
+  const projectId = Number(field(form, 'projectId'));
+  const trim = (name: string) => field(form, name).trim().replace(/^\.\//, '');
+  try {
+    await setBuild(user.id, projectId, field(form, 'type') === 'dockerfile'
+      ? { type: 'dockerfile', file: trim('file') || 'Dockerfile', context: trim('context') || '.', target: trim('target') || undefined }
+      : { type: 'railpack' });
+  } catch (err) {
+    return withError(`/projects/${projectId}`, err, 'build');
+  }
+  redirect(`/projects/${projectId}?saved=build#build`);
 }
 
 export async function removeVolumeAction(form: FormData) {

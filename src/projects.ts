@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import { sql } from './db.ts';
-import { deploy, FAIL, imageBytes, removeApp, removeNamespace, toName, validate, validateEnvKey, validateVolumePath, type DeployInput } from './deploy.ts';
+import { deploy, FAIL, imageBytes, removeApp, removeNamespace, toName, validate, validateBuild, validateEnvKey, validateVolumePath, type Build, type DeployInput } from './deploy.ts';
 import { githubApp, installationToken } from './github.ts';
 import { deleteDomainObjects, listDomains } from './domains.ts';
 import { checkPassword, type User } from './auth.ts';
@@ -26,12 +26,13 @@ export async function listProjects(userId: number): Promise<(Project & { live: s
 // IDs kommen aus der URL; "abc" oder ein fehlender Wert ergibt NaN, und Postgres würde dann abbrechen
 const isId = (n: number) => Number.isSafeInteger(n) && n > 0;
 
-type ProjectDetails = Project & { google_verification: string | null; volume_path: string | null; volume_mib: number | null };
+type ProjectDetails = Project & { google_verification: string | null; volume_path: string | null; volume_mib: number | null;
+  dockerfile: string | null; docker_context: string | null; docker_target: string | null };
 
 export async function getProject(userId: number, projectId: number): Promise<ProjectDetails | undefined> {
   if (!isId(projectId)) return undefined;
   const [p] = await sql<ProjectDetails[]>`
-    SELECT p.id, p.name, p.repo, p.google_verification, p.volume_path, p.volume_mib, d.status, d.url FROM projects p
+    SELECT p.id, p.name, p.repo, p.google_verification, p.volume_path, p.volume_mib, p.dockerfile, p.docker_context, p.docker_target, d.status, d.url FROM projects p
     LEFT JOIN LATERAL (SELECT status, url FROM deployments WHERE project_id = p.id AND status = 'done' ORDER BY id DESC LIMIT 1) d ON true
     WHERE p.id = ${projectId} AND p.user_id = ${userId}`;
   return p;
@@ -117,7 +118,10 @@ export async function startDeploy(user: User, projectId: number, sha?: string): 
     throw err;
   }
   const volume = project.volume_path && project.volume_mib ? { path: project.volume_path, mib: project.volume_mib } : undefined;
-  return { id, run: () => runDeploy(id, user.id, { user: user.name, project: project.name, repo: project.repo, sha, volume }) };
+  const build: Build = project.dockerfile
+    ? { type: 'dockerfile', file: project.dockerfile, context: project.docker_context ?? '.', target: project.docker_target ?? undefined }
+    : { type: 'railpack' };
+  return { id, run: () => runDeploy(id, user.id, { user: user.name, project: project.name, repo: project.repo, sha, volume, build }) };
 }
 
 /** Push-Webhook: alle Projekte des Users (dem die App gehört) mit diesem Repo neu deployen. */
@@ -163,6 +167,15 @@ export async function removeVolume(userId: number, projectId: number, confirm: s
   if (!project) throw new Error('Projekt nicht gefunden');
   if (confirm.trim() !== project.name) throw new Error(`Zum Entfernen genau "${project.name}" eintippen`);
   await sql`UPDATE projects SET volume_path = NULL, volume_mib = NULL WHERE id = ${projectId} AND user_id = ${userId}`;
+}
+
+/** Railpack oder Dockerfile; gilt ab dem nächsten Deploy. */
+export async function setBuild(userId: number, projectId: number, build: Build): Promise<void> {
+  validateBuild(build);
+  const d = build.type === 'dockerfile' ? build : undefined;
+  const [p] = await sql`UPDATE projects SET dockerfile = ${d?.file ?? null}, docker_context = ${d?.context ?? null}, docker_target = ${d?.target ?? null}
+    WHERE id = ${projectId} AND user_id = ${userId} RETURNING id`;
+  if (!p) throw new Error('Projekt nicht gefunden');
 }
 
 export async function listEnvKeys(userId: number, projectId: number): Promise<string[]> {

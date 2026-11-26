@@ -162,3 +162,8 @@ CREATE TABLE IF NOT EXISTS mcp_audit (
   error text
 );
 CREATE INDEX IF NOT EXISTS mcp_audit_at ON mcp_audit (at);
+
+-- Build-Art wie bei Dokploy: dockerfile NULL = Railpack, sonst Pfad im Repo samt Kontext und optionaler Stage
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS dockerfile text;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_context text;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_target text;

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import { PassThrough } from 'node:stream';
 import {
   BatchV1Api,
@@ -30,7 +31,7 @@ const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/; // kein "--", damit "<projekt>--<user>"
 const REPO = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // diese Namen setzt Shipli selbst im Build- oder App-Container
-const RESERVED_ENV = new Set(['PORT', 'REPO', 'SHA', 'RAILPACK_VERSION', 'SHIPLI_ENV_KEYS', 'SHIPLI_GIT_TOKEN', 'BUILDKITD_FLAGS']);
+const RESERVED_ENV = new Set(['PORT', 'REPO', 'SHA', 'RAILPACK_VERSION', 'SHIPLI_ENV_KEYS', 'SHIPLI_GIT_TOKEN', 'BUILDKITD_FLAGS', 'SHIPLI_DOCKERFILE', 'SHIPLI_BUILD_ARGS']);
 const PORT = 3000;
 // Schritt-Zeilen von Shipli; die normale Log-Ansicht zeigt nur diese, Fehler und was vor einem Fehler kam
 export const STEP = '▸ ';
@@ -45,7 +46,21 @@ export type DeployInput = {
   env?: Record<string, string>;
   limits: Limits; // ResourceQuota und LimitRange des Namespace
   volume?: { path: string; mib: number }; // dauerhafter Ordner, sonst nur Wegwerf-Dateisystem
+  build?: Build; // ohne: Railpack
 };
+
+// wie bei Dokploy: Railpack erkennt alles selbst, Dockerfile mit Pfad, Kontext und optional Stage
+export type Build = { type: 'railpack' } | { type: 'dockerfile'; file: string; context: string; target?: string };
+
+const REPO_PATH = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+
+export function validateBuild(b: Build): void {
+  if (b.type === 'railpack') return;
+  for (const [what, v] of [['Dockerfile', b.file], ['Kontext', b.context]]) {
+    if (v.length > 200 || !REPO_PATH.test(v) || v.split('/').includes('..')) throw new Error(`${what} "${v}": Pfad im Repo, z. B. Dockerfile oder apps/web`);
+  }
+  if (b.target && (b.target.length > 64 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(b.target))) throw new Error(`Stage "${b.target}": nur Buchstaben, Ziffern, . _ -`);
+}
 
 export function validateName(what: string, v: string): void {
   if (v.length > 20 || !NAME.test(v)) throw new Error(`${what} "${v}": nur a-z, 0-9 und einzelne Bindestriche, höchstens 20 Zeichen`);
@@ -71,11 +86,12 @@ export function validateVolumePath(path: string): void {
   if (hit) throw new Error(`Pfad "${path}" geht nicht, ${hit === '/app' ? 'dort liegt der Code der App. Nimm z. B. /app/data' : `${hit} braucht der Container selbst`}`);
 }
 
-export function validate({ user, project, repo, env = {} }: Omit<DeployInput, 'limits'>): void {
+export function validate({ user, project, repo, env = {}, build }: Omit<DeployInput, 'limits'>): void {
   validateName('User', user);
   validateName('Projekt', project);
   if (!REPO.test(repo)) throw new Error(`Repo "${repo}": nur https://github.com/<owner>/<repo>`);
   Object.keys(env).forEach(validateEnvKey);
+  if (build) validateBuild(build);
 }
 
 export const namespaceOf = (user: string) => `shipli-u-${user}`;
@@ -96,6 +112,7 @@ export const labels = (user: string, project?: string) => ({
 const PREPARE = `
 apk add --no-cache git curl >/dev/null
 # shortcut: nur x86_64, für arm64-Nodes die Architektur aus uname ableiten
+if [ -z "$SHIPLI_DOCKERFILE" ]; then
 curl -fsSL "https://github.com/railwayapp/railpack/releases/download/$RAILPACK_VERSION/railpack-$RAILPACK_VERSION-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /usr/local/bin railpack
 git init -q /work/src && cd /work/src
 if [ -n "\${SHIPLI_GIT_TOKEN:-}" ]; then
@@ -108,11 +125,29 @@ mkdir -p /work/plan
 set --
 for k in $SHIPLI_ENV_KEYS; do set -- "$@" --env "$k=$(printenv "$k")"; done
 railpack prepare /work/src --plan-out /work/plan/railpack-plan.json "$@"
+elif [ ! -f "/work/src/$SHIPLI_DOCKERFILE" ]; then
+  echo "✖ $SHIPLI_DOCKERFILE gibt es im Repo nicht"; exit 1
+fi
 `;
 
 export function buildJob(input: DeployInput, sha: string, secrets: { env: string; git?: string }) {
-  const { user, project, repo, env = {} } = input;
+  const { user, project, repo, env = {}, build = { type: 'railpack' } } = input;
   const keys = Object.keys(env).sort();
+  const docker = build.type === 'dockerfile' ? build : undefined;
+  const frontend = docker
+    ? [
+      '--frontend=dockerfile.v0',
+      '--local', `context=${posix.join('/work/src', docker.context)}`,
+      '--local', `dockerfile=${posix.join('/work/src', posix.dirname(docker.file))}`,
+      '--opt', `filename=${posix.basename(docker.file)}`,
+      ...(docker.target ? ['--opt', `target=${docker.target}`] : []),
+    ]
+    : [
+      '--frontend=gateway.v0',
+      '--opt', `source=ghcr.io/railwayapp/railpack-frontend:${config.railpackVersion}`,
+      '--local', 'context=/work/src',
+      '--local', 'dockerfile=/work/plan',
+    ];
   const envFrom = [{ secretRef: { name: secrets.env } }];
   return {
     apiVersion: 'batch/v1',
@@ -146,6 +181,7 @@ export function buildJob(input: DeployInput, sha: string, secrets: { env: string
               { name: 'SHA', value: sha },
               { name: 'RAILPACK_VERSION', value: config.railpackVersion },
               { name: 'SHIPLI_ENV_KEYS', value: keys.join(' ') },
+              { name: 'SHIPLI_DOCKERFILE', value: docker?.file ?? '' },
               ...(secrets.git ? [{ name: 'SHIPLI_GIT_TOKEN', valueFrom: { secretKeyRef: { name: secrets.git, key: 'token' } } }] : []),
             ],
             volumeMounts: [{ name: 'work', mountPath: '/work' }],
@@ -155,16 +191,15 @@ export function buildJob(input: DeployInput, sha: string, secrets: { env: string
             image: config.buildkitImage,
             // Shipli liest den Digest aus der Termination-Message, damit ein überschriebener Tag keine laufende App
             // austauscht; buildctl schreibt atomar über eine Temp-Datei, das geht in /dev nicht
-            command: ['sh', '-c', 'buildctl-daemonless.sh "$@" --metadata-file /tmp/meta.json && cat /tmp/meta.json > /dev/termination-log', 'sh'],
+            // Dockerfile: Variablen zusätzlich als Build-Argumente (ARG), wie bei Dokploy; die Werte erst hier aus der
+            // Umgebung lesen, damit sie nicht im Job-Spec stehen
+            command: ['sh', '-c', 'for k in $SHIPLI_BUILD_ARGS; do set -- "$@" --opt "build-arg:$k=$(printenv "$k")"; done; buildctl-daemonless.sh "$@" --metadata-file /tmp/meta.json && cat /tmp/meta.json > /dev/termination-log', 'sh'],
             args: [
               'build',
-              '--frontend=gateway.v0',
-              '--opt', `source=ghcr.io/railwayapp/railpack-frontend:${config.railpackVersion}`,
-              '--local', 'context=/work/src',
-              '--local', 'dockerfile=/work/plan',
+              ...frontend,
               ...keys.flatMap((k) => ['--secret', `id=${k},env=${k}`]),
               // ohne Hash baut Railpack bei geänderten Werten nicht neu
-              ...(keys.length ? ['--opt', `build-arg:secrets-hash=${envHash(env)}`] : []),
+              ...(keys.length && !docker ? ['--opt', `build-arg:secrets-hash=${envHash(env)}`] : []),
               // shortcut: registry.insecure erlaubt HTTP, nötig für zot ohne TLS; mit TLS-zot entfernen
               '--output', `type=image,name=${imageOf(config.registryPush, user, project, sha)},push=true,registry.insecure=true`,
               // BuildKit-State ist ein emptyDir, also Cache pro Projekt in zot; mode=max behält auch die Zwischenschritte (yarn install)
@@ -174,7 +209,7 @@ export function buildJob(input: DeployInput, sha: string, secrets: { env: string
             resources: { requests: { cpu: '500m', memory: '1Gi' }, limits: { cpu: '2', memory: '3Gi' } },
             // der Git-Token bleibt draussen: ohne Prozess-Sandbox könnten Build-Schritte die Umgebung von buildkitd lesen
             envFrom,
-            env: [{ name: 'BUILDKITD_FLAGS', value: '--oci-worker-no-process-sandbox' }],
+            env: [{ name: 'BUILDKITD_FLAGS', value: '--oci-worker-no-process-sandbox' }, { name: 'SHIPLI_BUILD_ARGS', value: docker ? keys.join(' ') : '' }],
             // rootless BuildKit braucht Unconfined, deshalb laufen Builds im eigenen Namespace statt beim User
             securityContext: {
               runAsUser: 1000,

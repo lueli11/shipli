@@ -76,12 +76,14 @@ next_ip() { echo "${1%.*}.$(( ${1##*.} + $2 ))"; }
 
 # fragt die Nodes ab Nummer $1 bis $2 ab (IP, Proxmox-Host, VM-ID) und hängt sie an
 ask_nodes() {
-  local from=$1 to=$2 hosts ip host i
+  local from=$1 to=$2 hosts add ip host i
   mapfile -t hosts < <(pve_hosts)
+  # ohne Fragen: Proxmox-Hosts der neuen VMs, z. B. SHIPLI_ADD_PVE_HOSTS="pve2 pve3"
+  read -ra add <<<"${SHIPLI_ADD_PVE_HOSTS:-}"
   for ((i = from; i <= to; i++)); do
     ip="" host=""
     ask ip "IP der VM $SHIPLI_NAME-$i (frei, statisch)" "$( [ "$i" -gt 1 ] && next_ip "${nodes[0]}" $((i - 1)) )"
-    ask host "Proxmox-Host für $SHIPLI_NAME-$i${hosts[*]:+ (im Cluster: ${hosts[*]})}" "${hosts[$(( (i - 1) % (${#hosts[@]} > 0 ? ${#hosts[@]} : 1) ))]:-}"
+    ask host "Proxmox-Host für $SHIPLI_NAME-$i${hosts[*]:+ (im Cluster: ${hosts[*]})}" "${add[i - from]:-${hosts[$(( (i - 1) % (${#hosts[@]} > 0 ? ${#hosts[@]} : 1) ))]:-}}"
     on_host "$host" <<<'command -v qm >/dev/null' || die "$host ist kein erreichbarer Proxmox-Host (root-SSH?)"
     nodes+=("$ip") pve+=("$host") vmids+=("$(free_vmid "$host" "${vmids[@]}")")
   done

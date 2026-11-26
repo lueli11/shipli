@@ -4,7 +4,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . infra/env.sh
-image=$1
+# Tag -> Digest für Images von ghcr.io: k3s holt ein vorhandenes Tag (main, latest) sonst nie neu
+pin() {
+  case $1 in *@*) echo "$1"; return ;; ghcr.io/*:*) ;; *) echo "$1"; return ;; esac
+  local repo=${1%:*} path tag=${1##*:} tok digest
+  path=${repo#ghcr.io/}
+  tok=$(curl -fsS "https://ghcr.io/token?scope=repository:$path:pull" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  digest=$(curl -fsSI -H "Authorization: Bearer $tok" -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json' "https://ghcr.io/v2/$path/manifests/$tag" \
+    | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' | tr -d '\r')
+  [ -n "$digest" ] || { echo "Image $1 nicht gefunden" >&2; exit 1; }
+  echo "$repo@$digest"
+}
+image=$(pin "$1")
 manifest=$(SHIPLI_IMAGE=$image infra/render.sh deploy/shipli.yaml)
 infra/secrets.sh
 

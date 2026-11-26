@@ -27,7 +27,7 @@ if [ -z "${BASH_SOURCE[0]:-}" ] || { [ "$cmd" = update ] && [ -z "${SHIPLI_FETCH
   rm -rf "$dir" && mv "$dir.part" "$dir"
   SHIPLI_FETCHED=1 SHIPLI_VERSION=$version exec bash "$dir/install/proxmox.sh" "$@"
 fi
-src=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+src=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)   # über den Link shipli aufgerufen
 export SHIPLI_VERSION=${SHIPLI_VERSION:-main}
 export SHIPLI_ENV=${SHIPLI_ENV:-$HOME/.config/shipli/shipli.env}
 state=$(dirname "$SHIPLI_ENV")

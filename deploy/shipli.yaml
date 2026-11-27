@@ -154,6 +154,11 @@ spec:
             # Leserecht in zot für die Imagegrösse unter „Nutzung“; ohne Secret fehlt nur diese Zahl
             - name: SHIPLI_REGISTRY_READ_AUTH
               valueFrom: { secretKeyRef: { name: zot-read, key: auth, optional: true } }
+            # Mailversand für Registrierung mit Bestätigung; ohne Secret bleibt nur Einladung oder offene Registrierung
+            - name: SHIPLI_SMTP_URL
+              valueFrom: { secretKeyRef: { name: shipli-smtp, key: url, optional: true } }
+            - name: SHIPLI_MAIL_FROM
+              valueFrom: { secretKeyRef: { name: shipli-smtp, key: from, optional: true } }
             # erster Admin beim allerersten Start, danach ohne Wirkung (instrumentation.ts)
             - name: SHIPLI_ADMIN_EMAIL
               valueFrom: { secretKeyRef: { name: shipli-admin, key: email, optional: true } }

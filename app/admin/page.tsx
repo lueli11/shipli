@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
-import { listUsers } from '../../src/auth.ts';
+import { getRegistration, listUsers } from '../../src/auth.ts';
+import { mailReady } from '../../src/mail.ts';
 import { usage } from '../../src/metrics.ts';
-import { setLimitsAction } from '../actions.ts';
+import { setLimitsAction, setRegistrationAction } from '../actions.ts';
 import { requireUser } from '../session.ts';
 import { PageHead } from '../page-head.tsx';
 import { Submit } from '../submit.tsx';
@@ -13,13 +14,29 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
   // 404 statt 403: Nicht-Admins sollen nicht erfahren, dass es die Seite gibt
   if (!user.is_admin) notFound();
   const q = await searchParams;
-  const [users, all] = await Promise.all([listUsers(), usage()]);
+  const [users, all, registration] = await Promise.all([listUsers(), usage(), getRegistration()]);
   const byId = new Map(all.map((u) => [u.user_id, u]));
   const total = users.reduce((n, u) => n + u.projects, 0);
   return (
     <main>
       <PageHead icon="account" color="var(--t-project)" title="User" question={`${users.length} User, ${total} Projekte`} />
       <div className="mb-3"><InviteForm /></div>
+      <section id="registrierung" className="card mb-3 grid gap-3 p-4">
+        <h2 className="font-display text-lg font-extrabold">Registrierung</h2>
+        <form action={setRegistrationAction} className="flex flex-wrap items-end gap-3">
+          <label className="field min-w-64 flex-1"><span>Wer darf ein Konto anlegen?</span>
+            <select name="mode" defaultValue={registration}>
+              <option value="invite">Nur mit Einladung</option>
+              <option value="email" disabled={!mailReady()}>Alle, nach Bestätigung per E-Mail{mailReady() ? '' : ' (SHIPLI_SMTP_URL fehlt)'}</option>
+              <option value="open">Alle, sofort ohne Bestätigung</option>
+            </select>
+          </label>
+          <Submit className="btn" busy="Speichert …">Speichern</Submit>
+        </form>
+        <p className="text-sm text-muted">Neue Konten bekommen die Standardgrenzen (1 Kern, 2 GB RAM, 3 Projekte) und dürfen sofort Code bauen und laufen lassen.</p>
+        {q.in === 'registrierung' && q.error && <p className="notice-bad" role="alert">{q.error}</p>}
+        {q.saved === 'registrierung' && <p className="notice-ok" role="status">Gespeichert.</p>}
+      </section>
       <ul className="grid gap-3">
         {users.map((u, i) => {
           const use = byId.get(u.id)!;

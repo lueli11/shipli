@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { acceptInvite, changePassword, createFirstAdmin, createInvite, hashPassword, inviteByToken, login, userBySession, verifyPassword } from './auth.ts';
+import { acceptInvite, changePassword, createFirstAdmin, createInvite, getRegistration, hashPassword, inviteByToken, login, register, setRegistration, userBySession, verifyPassword } from './auth.ts';
 import { createProject, getDeployment, getProject, listProjects, startDeploy } from './projects.ts';
 import { sql } from './db.ts';
 
@@ -75,4 +75,30 @@ test('Login-Sperre pro IP: viele E-Mails von derselben IP', db, async () => {
   await assert.rejects(login(`t${suffix}-spray-neu@example.com`, 'egal-egal', ip), /Zu viele/);
   // andere IP ist nicht betroffen
   assert.equal(await login(`t${suffix}-spray-neu@example.com`, 'egal-egal', '198.51.100.7'), undefined);
+});
+
+test('Registrierung folgt der Einstellung im Admin', db, async () => {
+  const before = await getRegistration();
+  const name = `t${suffix}-reg`;
+  const input = { email: `${name}@example.com`, name, password: 'langes-passwort' };
+  try {
+    await setRegistration('invite', true);
+    await assert.rejects(register(input, '192.0.2.1'), /Einladung/);
+    await assert.rejects(setRegistration('email', false), /SMTP/);
+
+    await setRegistration('email', true);
+    const sent = await register({ ...input, name: `${name}-mail`, email: `${name}-mail@example.com` }, '192.0.2.2');
+    assert.ok('invite' in sent && (await inviteByToken(sent.invite))?.email === `${name}-mail@example.com`);
+
+    await setRegistration('open', true);
+    await assert.rejects(register({ ...input, password: 'kurz' }, '192.0.2.3'), /mindestens/);
+    const done = await register(input, '192.0.2.3');
+    assert.ok('session' in done && (await userBySession(done.session))?.is_admin === false);
+    assert.ok(await login(input.email, input.password));
+    await assert.rejects(register(input, '192.0.2.3'), /vergeben/);
+    for (let i = 0; i < 2; i++) await register({ ...input, name: `${name}${i}`, email: `${name}${i}@example.com` }, '192.0.2.3').catch(() => {});
+    await assert.rejects(register({ ...input, name: `${name}x`, email: `${name}x@example.com` }, '192.0.2.3'), /Zu viele/);
+  } finally {
+    await setRegistration(before, true);
+  }
 });

@@ -3,7 +3,8 @@
 import { after } from 'next/server';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { acceptInvite, changePassword, createApiToken, createInvite, deleteSession, login, revokeApiToken } from '../src/auth.ts';
+import { acceptInvite, changePassword, createApiToken, createInvite, deleteSession, login, register, revokeApiToken, setRegistration } from '../src/auth.ts';
+import { mailReady, sendMail } from '../src/mail.ts';
 import { refresh } from 'next/cache';
 import { createProject, deleteAccount, deleteProject, removeVolume, setBuild, setEnv, setVolume, startDeploy, unsetEnv } from '../src/projects.ts';
 import { addDomains, googleFileFromContent, normalizeDomain, removeDomain, setGoogleVerification, setPrimaryDomain, withWww } from '../src/domains.ts';
@@ -49,6 +50,36 @@ export async function acceptInviteAction(form: FormData) {
   }
   await setSessionCookie(session);
   redirect('/');
+}
+
+export async function registerAction(form: FormData) {
+  let result: Awaited<ReturnType<typeof register>>;
+  try {
+    result = await register(
+      { email: field(form, 'email'), name: field(form, 'name'), password: field(form, 'password') },
+      (await headers()).get('x-real-ip') ?? undefined,
+    );
+    if ('invite' in result) {
+      const link = `${process.env.SHIPLI_APP_URL ?? 'http://localhost:3000'}/invite/${result.invite}`;
+      await sendMail(result.email, 'Dein Shipli-Konto', `Hallo\n\nÖffne diesen Link und lege dein Passwort fest (7 Tage gültig):\n${link}\n\nHast du dich nicht registriert, ignoriere diese Mail.`);
+    }
+  } catch (err) {
+    return withError('/registrieren', err);
+  }
+  if ('invite' in result) redirect('/registrieren?sent=1');
+  await setSessionCookie(result.session);
+  redirect('/');
+}
+
+export async function setRegistrationAction(form: FormData) {
+  const admin = await requireUser();
+  if (!admin.is_admin) notFound();
+  try {
+    await setRegistration(field(form, 'mode'), mailReady());
+  } catch (err) {
+    return withError('/admin', err, 'registrierung');
+  }
+  redirect('/admin?saved=registrierung#registrierung');
 }
 
 export async function createProjectAction(form: FormData) {

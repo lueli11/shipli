@@ -93,7 +93,8 @@ export async function changePassword(user: User, current: string, next: string, 
   await sql`DELETE FROM sessions WHERE user_id = ${user.id} AND token_hash <> ${sha256(keepSession)}`;
 }
 
-export async function createInvite(email: string, name: string, admin = false): Promise<string> {
+/** Gibt die E-Mail normalisiert zurück. */
+async function checkNewUser(email: string, name: string): Promise<string> {
   email = email.trim().toLowerCase();
   if (!EMAIL.test(email)) throw new Error(`E-Mail "${email}" ist ungültig`);
   validateName('User', name);
@@ -101,6 +102,11 @@ export async function createInvite(email: string, name: string, admin = false): 
   if (name === 'shipli') throw new Error('Der Name "shipli" ist reserviert');
   const [taken] = await sql`SELECT 1 FROM users WHERE email = ${email} OR name = ${name}`;
   if (taken) throw new Error('E-Mail oder Name ist schon vergeben');
+  return email;
+}
+
+export async function createInvite(email: string, name: string, admin = false): Promise<string> {
+  email = await checkNewUser(email, name);
   const token = newToken();
   await sql`INSERT INTO invites (token_hash, email, name, admin, expires_at) VALUES (${sha256(token)}, ${email}, ${name}, ${admin}, now() + interval '7 days')`;
   return token;
@@ -136,6 +142,53 @@ export async function acceptInvite(token: string, password: string): Promise<str
     return user.id;
   });
   return createSession(userId);
+}
+
+// --- Registrierung ohne Einladung --------------------------------------------
+
+/** invite: nur per Einladung, email: Link per Mail (eine Einladung an sich selbst), open: Konto sofort. */
+export const REGISTRATION = ['invite', 'email', 'open'] as const;
+export type Registration = (typeof REGISTRATION)[number];
+const MAX_REGISTRATIONS = 5;
+
+export async function getRegistration(): Promise<Registration> {
+  const [row] = await sql<{ value: Registration }[]>`SELECT value FROM settings WHERE key = 'registration'`;
+  return row?.value ?? 'invite';
+}
+
+export async function setRegistration(mode: string, mailReady: boolean): Promise<void> {
+  if (!REGISTRATION.includes(mode as Registration)) throw new Error(`Unbekannte Art der Registrierung: ${mode}`);
+  if (mode === 'email' && !mailReady) throw new Error('Für Bestätigung per E-Mail fehlt SHIPLI_SMTP_URL');
+  await sql`INSERT INTO settings (key, value) VALUES ('registration', ${sql.json(mode)})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+}
+
+/**
+ * Gibt bei "open" die Session zurück, bei "email" den Einladungstoken für die Mail.
+ * Jeder Versuch zählt pro IP, damit niemand massenhaft Konten anlegt oder Mails an fremde Adressen auslöst.
+ */
+export async function register(
+  input: { email: string; name: string; password: string },
+  ip?: string,
+  now = Date.now(),
+): Promise<{ session: string } | { invite: string; email: string }> {
+  const mode = await getRegistration();
+  if (mode === 'invite') throw new Error('Shipli läuft nur auf Einladung');
+  const key = ip && `reg:${ip}`;
+  if (key) {
+    if (blocked(key, MAX_REGISTRATIONS, now)) throw new Error('Zu viele Registrierungen von dieser Adresse, warte 15 Minuten');
+    failures.set(key, [...(failures.get(key) ?? []), now]);
+  }
+  const name = input.name.trim();
+  if (mode === 'email') {
+    const email = input.email.trim().toLowerCase();
+    return { invite: await createInvite(email, name), email };
+  }
+  if (input.password.length < MIN_PASSWORD) throw new Error(`Passwort braucht mindestens ${MIN_PASSWORD} Zeichen`);
+  const email = await checkNewUser(input.email, name);
+  const [user] = await sql<{ id: number }[]>`
+    INSERT INTO users (email, name, password_hash) VALUES (${email}, ${name}, ${await hashPassword(input.password)}) RETURNING id`;
+  return { session: await createSession(user.id) };
 }
 
 // --- API-Tokens für MCP -----------------------------------------------------

@@ -101,7 +101,8 @@ export function mcpServer(user: TokenUser, background: Background): McpServer {
   tool('create_project', 'Neues Projekt aus einem GitHub-Repo. Private Repos nur mit installierter GitHub App (siehe list_repos). Deployt noch nicht.', {
     name: z.string().describe('Projektname, wird zu a-z0-9 und Bindestrich'),
     repo: z.string().describe('https://github.com/<owner>/<repo>'),
-  }, async ({ name, repo }) => ({ project_id: await createProject(user, name, repo) }));
+    cluster: z.boolean().optional().describe('true: zwei Kopien auf verschiedenen Servern, übersteht einen Serverausfall und deployt ohne Unterbruch, braucht doppelt CPU/RAM, kein dauerhafter Ordner. Standard: eine Kopie'),
+  }, async ({ name, repo, cluster }) => ({ project_id: await createProject(user, name, repo, cluster ? 2 : 1) }));
 
   tool('deploy', 'Startet einen Build des Standard-Branches und gibt sofort die Deployment-ID zurück. Stand mit get_deploy_status abfragen.', {
     project_id: projectId,

@@ -61,8 +61,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           ) : (
             <label className="field min-w-56 flex-[2]"><span>Öffentliches GitHub-Repo</span><input name="repo" type="url" placeholder="https://github.com/user/repo" required /></label>
           )}
+          <label className="field w-48"><span>Betriebsart</span>
+            <select name="mode" defaultValue="single">
+              <option value="single">Einzeln (1 Kopie)</option>
+              <option value="cluster">Cluster (2 Kopien)</option>
+            </select>
+          </label>
           <Submit className="btn-primary" busy="Wird angelegt …">Anlegen</Submit>
         </form>
+        <p className="mt-3 text-sm text-muted">Cluster: zwei Kopien auf verschiedenen Servern, die App übersteht den Ausfall eines Servers und deployt ohne Unterbruch. Braucht doppelt so viel CPU und RAM, hat keinen dauerhaften Ordner, und die App darf nichts nur im Speicher halten (z. B. Sessions). Lässt sich später nicht ändern.</p>
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-[var(--hair)] pt-4 text-sm text-muted">
           {!app && <>
             <a className="btn" href="/api/github/create-app"><GithubIcon /> GitHub App erstellen</a>

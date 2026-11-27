@@ -129,3 +129,17 @@ test('Dockerfile-Pfade bleiben im Repo', () => {
     assert.throws(() => validateBuild({ type: 'dockerfile', ...bad }), JSON.stringify(bad));
   }
 });
+
+test('Cluster-Modus: zwei Pods auf verschiedene Nodes verteilt, ohne Ordner', () => {
+  const deployment = (o: unknown[]) => (o as { kind: string; spec: any }[]).find((x) => x.kind === 'Deployment')!.spec;
+  const single = deployment(appManifests(ok, 'f'.repeat(40)));
+  assert.equal(single.replicas, 1);
+  assert.equal(single.template.spec.topologySpreadConstraints, undefined);
+  const cluster = deployment(appManifests({ ...ok, replicas: 2 }, 'f'.repeat(40)));
+  assert.equal(cluster.replicas, 2);
+  const [spread] = cluster.template.spec.topologySpreadConstraints;
+  assert.deepEqual([spread.topologyKey, spread.whenUnsatisfiable, spread.labelSelector.matchLabels], ['kubernetes.io/hostname', 'ScheduleAnyway', { 'shipli/project': 'blog' }]);
+  validate({ ...ok, replicas: 2 });
+  assert.throws(() => validate({ ...ok, replicas: 2, volume: { path: '/app/data', mib: 1024 } }), /Cluster/);
+  assert.throws(() => validate({ ...ok, replicas: 3 }));
+});

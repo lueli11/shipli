@@ -27,12 +27,12 @@ export async function listProjects(userId: number): Promise<(Project & { live: s
 const isId = (n: number) => Number.isSafeInteger(n) && n > 0;
 
 type ProjectDetails = Project & { google_verification: string | null; volume_path: string | null; volume_mib: number | null;
-  dockerfile: string | null; docker_context: string | null; docker_target: string | null };
+  dockerfile: string | null; docker_context: string | null; docker_target: string | null; replicas: number };
 
 export async function getProject(userId: number, projectId: number): Promise<ProjectDetails | undefined> {
   if (!isId(projectId)) return undefined;
   const [p] = await sql<ProjectDetails[]>`
-    SELECT p.id, p.name, p.repo, p.google_verification, p.volume_path, p.volume_mib, p.dockerfile, p.docker_context, p.docker_target, d.status, d.url FROM projects p
+    SELECT p.id, p.name, p.repo, p.google_verification, p.volume_path, p.volume_mib, p.dockerfile, p.docker_context, p.docker_target, p.replicas, d.status, d.url FROM projects p
     LEFT JOIN LATERAL (SELECT status, url FROM deployments WHERE project_id = p.id AND status = 'done' ORDER BY id DESC LIMIT 1) d ON true
     WHERE p.id = ${projectId} AND p.user_id = ${userId}`;
   return p;
@@ -40,10 +40,10 @@ export async function getProject(userId: number, projectId: number): Promise<Pro
 
 const MAX_PROJECTS = 3;
 
-export async function createProject(user: User, name: string, repo: string): Promise<number> {
+export async function createProject(user: User, name: string, repo: string, replicas = 1): Promise<number> {
   repo = repo.trim().replace(/\.git$|\/$/, '');
   name = toName(name);
-  validate({ user: user.name, project: name, repo });
+  validate({ user: user.name, project: name, repo, replicas });
   // die ResourceQuota im Namespace ist auf drei Apps ausgelegt
   const [{ n }] = await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM projects WHERE user_id = ${user.id}`;
   if (n >= MAX_PROJECTS && !user.is_admin) throw new Error(`Höchstens ${MAX_PROJECTS} Projekte pro Konto`);
@@ -53,7 +53,7 @@ export async function createProject(user: User, name: string, repo: string): Pro
       const [u] = await tx<{ max: number; n: number }[]>`
         SELECT max_projects AS max, (SELECT count(*)::int FROM projects WHERE user_id = ${user.id}) AS n FROM users WHERE id = ${user.id} FOR UPDATE`;
       if (u && u.n >= u.max) throw new Error(`Du hast schon ${u.n} von ${u.max} Projekten. Lösche eines oder frag den Admin nach mehr.`);
-      const [p] = await tx<{ id: number }[]>`INSERT INTO projects (user_id, name, repo) VALUES (${user.id}, ${name}, ${repo}) RETURNING id`;
+      const [p] = await tx<{ id: number }[]>`INSERT INTO projects (user_id, name, repo, replicas) VALUES (${user.id}, ${name}, ${repo}, ${replicas}) RETURNING id`;
       return p.id;
     });
   } catch (err) {
@@ -121,7 +121,7 @@ export async function startDeploy(user: User, projectId: number, sha?: string): 
   const build: Build = project.dockerfile
     ? { type: 'dockerfile', file: project.dockerfile, context: project.docker_context ?? '.', target: project.docker_target ?? undefined }
     : { type: 'railpack' };
-  return { id, run: () => runDeploy(id, user.id, { user: user.name, project: project.name, repo: project.repo, sha, volume, build }) };
+  return { id, run: () => runDeploy(id, user.id, { user: user.name, project: project.name, repo: project.repo, sha, volume, build, replicas: project.replicas }) };
 }
 
 /** Push-Webhook: alle Projekte des Users (dem die App gehört) mit diesem Repo neu deployen. */
@@ -148,12 +148,14 @@ export async function setVolume(userId: number, projectId: number, path: string,
   if (!Number.isSafeInteger(mib) || mib < 100) throw new Error('Grösse: mindestens 0,1 GB');
   await sql.begin(async (tx) => {
     // FOR UPDATE: zwei gleichzeitige Anfragen können die Grenze nicht gemeinsam überschreiten
-    const [u] = await tx<{ limit: number; others: number; current: number | null }[]>`
+    const [u] = await tx<{ limit: number; others: number; current: number | null; replicas: number }[]>`
       SELECT u.volume_limit AS limit,
+        (SELECT replicas FROM projects WHERE user_id = u.id AND id = ${projectId}) AS replicas,
         (SELECT coalesce(sum(volume_mib), 0)::int FROM projects WHERE user_id = u.id AND id <> ${projectId}) AS others,
         (SELECT volume_mib FROM projects WHERE user_id = u.id AND id = ${projectId}) AS current
       FROM users u WHERE u.id = ${userId} AND EXISTS (SELECT 1 FROM projects WHERE id = ${projectId} AND user_id = u.id) FOR UPDATE`;
     if (!u) throw new Error('Projekt nicht gefunden');
+    if (u.replicas > 1) throw new Error('Im Cluster-Modus gibt es keinen dauerhaften Ordner, er hängt immer nur an einem Pod');
     // Longhorn kann ein Volume nur vergrössern
     if (u.current && mib < u.current) throw new Error(`Ein Ordner lässt sich nicht verkleinern (jetzt ${gb(u.current)})`);
     if (u.others + mib > u.limit) throw new Error(`Deine Ordner dürfen zusammen ${gb(u.limit)} haben, frei sind noch ${gb(u.limit - u.others)}. Frag den Admin nach mehr.`);

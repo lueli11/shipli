@@ -167,3 +167,6 @@ CREATE INDEX IF NOT EXISTS mcp_audit_at ON mcp_audit (at);
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS dockerfile text;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_context text;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_target text;
+
+-- Betriebsart: 1 = einzeln, 2 = Cluster (zwei Pods auf verschiedenen Nodes, übersteht den Ausfall eines Nodes)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS replicas int NOT NULL DEFAULT 1 CHECK (replicas IN (1, 2));

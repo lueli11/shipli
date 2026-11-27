@@ -69,6 +69,7 @@ export default async function ProjectPage(props: { params: Promise<{ id: string 
       >
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <span className="rounded-full border-2 border-line bg-surface px-3 py-0.5"><Status status={deployments[0]?.status ?? null} /></span>
+          {project.replicas > 1 && <span className="rounded-full border-2 border-line bg-surface px-3 py-0.5 text-sm">Cluster · 2 Kopien</span>}
           <form action={deployAction}>
             <input type="hidden" name="projectId" value={project.id} />
             <Submit className="btn-primary" busy="Startet …">Jetzt deployen</Submit>
@@ -252,6 +253,7 @@ export default async function ProjectPage(props: { params: Promise<{ id: string 
               <h2 className="label mb-1">Dauerhafter Ordner</h2>
               <p className="mb-4 text-sm text-muted">Was die App in diesen Ordner schreibt, bleibt bei Deploys und Neustarts erhalten und zieht beim Ausfall eines Servers mit um (drei Kopien auf drei Servern). Alles andere im Container ist nach jedem Deploy weg. Was im Image an diesem Pfad liegt, ist verdeckt. Wirkt ab dem nächsten Deploy, der dann kurz offline ist. Grösse lässt sich nur erhöhen.{saved === 'ordner' && ' Gespeichert.'}</p>
               {errorIn('ordner')}
+              {project.replicas > 1 ? <p className="text-sm text-muted">Dieses Projekt läuft im Cluster-Modus mit zwei Kopien. Ein dauerhafter Ordner hängt immer nur an einer, darum gibt es hier keinen. Speichere Daten in einer Datenbank ausserhalb.</p> : <>
               <form action={setVolumeAction} className="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="projectId" value={project.id} />
                 <label className="field min-w-48 flex-1"><span>Pfad im Container</span><input name="path" defaultValue={project.volume_path ?? '/app/data'} required autoComplete="off" spellCheck={false} /></label>
@@ -267,6 +269,7 @@ export default async function ProjectPage(props: { params: Promise<{ id: string 
                   <Submit className="btn-primary danger" busy="Entfernt …">Ordner entfernen</Submit>
                 </form>
               )}
+              </>}
             </section>
           )}
 

@@ -86,7 +86,7 @@ export async function createProjectAction(form: FormData) {
   const user = await requireUser();
   let id: number;
   try {
-    id = await createProject(user, field(form, 'name'), field(form, 'repo'));
+    id = await createProject(user, field(form, 'name'), field(form, 'repo'), field(form, 'mode') === 'cluster' ? 2 : 1);
   } catch (err) {
     return withError('/', err);
   }

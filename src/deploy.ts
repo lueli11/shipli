@@ -46,6 +46,7 @@ export type DeployInput = {
   env?: Record<string, string>;
   limits: Limits; // ResourceQuota und LimitRange des Namespace
   volume?: { path: string; mib: number }; // dauerhafter Ordner, sonst nur Wegwerf-Dateisystem
+  replicas?: number; // 1 = einzeln (Standard), 2 = Cluster: zwei Pods auf verschiedenen Nodes
   build?: Build; // ohne: Railpack
 };
 
@@ -86,8 +87,10 @@ export function validateVolumePath(path: string): void {
   if (hit) throw new Error(`Pfad "${path}" geht nicht, ${hit === '/app' ? 'dort liegt der Code der App. Nimm z. B. /app/data' : `${hit} braucht der Container selbst`}`);
 }
 
-export function validate({ user, project, repo, env = {}, build }: Omit<DeployInput, 'limits'>): void {
+export function validate({ user, project, repo, env = {}, build, replicas = 1, volume }: Omit<DeployInput, 'limits'>): void {
   validateName('User', user);
+  if (replicas !== 1 && replicas !== 2) throw new Error('Betriebsart: einzeln oder Cluster');
+  if (replicas > 1 && volume) throw new Error('Ein dauerhafter Ordner hängt nur an einem Pod, im Cluster-Modus geht das nicht');
   validateName('Projekt', project);
   if (!REPO.test(repo)) throw new Error(`Repo "${repo}": nur https://github.com/<owner>/<repo>`);
   Object.keys(env).forEach(validateEnvKey);
@@ -285,7 +288,7 @@ export function appManifests(input: DeployInput, sha: string, digest?: string, s
   const namespace = namespaceOf(user);
   const meta = { name: project, namespace, labels: labels(user, project) };
   const selector = { 'shipli/project': project };
-  const { volume } = input;
+  const { volume, replicas = 1 } = input;
   return [
     ...namespaceManifests(user, input.limits),
     { apiVersion: 'v1', kind: 'Secret', metadata: { ...meta, name: envSecretOf(project) }, type: 'Opaque', stringData: env },
@@ -301,7 +304,7 @@ export function appManifests(input: DeployInput, sha: string, digest?: string, s
       kind: 'Deployment',
       metadata: meta,
       spec: {
-        replicas: 1,
+        replicas,
         // ohne Platz für einen zweiten Pod erst den alten stoppen (kurz offline), sonst bricht jeder Redeploy an der Quota ab
         // Ordner hängt nur an einem Pod (RWO): erst den alten ganz stoppen, sonst wartet der neue auf einem anderen Node ewig darauf
         strategy: volume ? { type: 'Recreate' }
@@ -318,6 +321,8 @@ export function appManifests(input: DeployInput, sha: string, digest?: string, s
             securityContext: { seccompProfile: { type: 'RuntimeDefault' } },
             // fällt ein Node aus, nach 30 s statt 5 min auf einem anderen starten (Longhorn hängt den Ordner dann um)
             tolerations: ['not-ready', 'unreachable'].map((t) => ({ key: `node.kubernetes.io/${t}`, operator: 'Exists', effect: 'NoExecute', tolerationSeconds: 30 })),
+            // ScheduleAnyway: mit DoNotSchedule fände der Ersatz-Pod keinen Platz, solange ein Node ausgefallen ist (oder es nur einen gibt)
+            ...(replicas > 1 && { topologySpreadConstraints: [{ maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway', labelSelector: { matchLabels: selector } }] }),
             ...(volume && { volumes: [{ name: 'data', persistentVolumeClaim: { claimName: volumeOf(project) } }] }),
             containers: [{
               name: 'app',
@@ -507,7 +512,7 @@ export async function deploy(input: DeployInput, out: NodeJS.WritableStream = pr
   await waitFor('Rollout', 180_000, async () => {
     const d = await apps.readNamespacedDeployment({ name: input.project, namespace });
     const s = d.status;
-    const ready = s?.observedGeneration === d.metadata?.generation && s?.updatedReplicas === 1 && s?.availableReplicas === 1 && !s?.unavailableReplicas;
+    const ready = s?.observedGeneration === d.metadata?.generation && s?.updatedReplicas === (input.replicas ?? 1) && s?.availableReplicas === (input.replicas ?? 1) && !s?.unavailableReplicas;
     if (ready) return true;
     const pods = (await core.listNamespacedPod({ namespace, labelSelector: `shipli/project=${input.project}` })).items;
     // ein Pod, der gerade gestoppt wird (gleicher Commit nochmals deployt), ist nicht neu

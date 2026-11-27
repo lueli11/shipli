@@ -26,8 +26,8 @@ export default async function Registrieren({ searchParams }: { searchParams: Pro
     <AuthCard subtitle="Konto anlegen">
       <form action={registerAction} className="space-y-4">
         <label className="field"><span>E-Mail</span><input name="email" type="email" autoComplete="email" required autoFocus /></label>
-        <label className="field"><span>Username (klein, z. B. nino)</span>
-          <input name="name" autoComplete="username" required maxLength={40} pattern="[a-z0-9]+(-[a-z0-9]+)*" spellCheck={false} />
+        <label className="field"><span>Username</span>
+          <input name="name" autoComplete="username" required maxLength={40} pattern="[A-Za-z0-9]+(-[A-Za-z0-9]+)*" spellCheck={false} />
         </label>
         {mode === 'open' && (
           <label className="field"><span>Passwort (mindestens 10 Zeichen)</span><input name="password" type="password" autoComplete="new-password" minLength={10} required /></label>

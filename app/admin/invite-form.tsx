@@ -13,8 +13,8 @@ export function InviteForm() {
       <h2 className="font-display text-lg font-extrabold">Einladen</h2>
       <form action={action} className="flex flex-wrap items-end gap-3">
         <label className="field min-w-52 flex-1"><span>E-Mail</span><input name="email" type="email" required autoComplete="off" /></label>
-        <label className="field min-w-40 flex-1"><span>Username (klein, z. B. nino)</span>
-          <input name="name" required maxLength={40} pattern="[a-z0-9]+(-[a-z0-9]+)*" autoComplete="off" spellCheck={false} />
+        <label className="field min-w-40 flex-1"><span>Username</span>
+          <input name="name" required maxLength={40} pattern="[A-Za-z0-9]+(-[A-Za-z0-9]+)*" autoComplete="off" spellCheck={false} />
         </label>
         <label className="flex items-center gap-2 pb-2 text-sm"><input name="admin" type="checkbox" /> Admin</label>
         <Submit className="btn-primary" busy="Wird erzeugt …">Link erzeugen</Submit>

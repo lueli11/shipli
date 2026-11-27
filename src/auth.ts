@@ -106,6 +106,7 @@ async function checkNewUser(email: string, name: string): Promise<string> {
 }
 
 export async function createInvite(email: string, name: string, admin = false): Promise<string> {
+  name = name.trim().toLowerCase();
   email = await checkNewUser(email, name);
   const token = newToken();
   await sql`INSERT INTO invites (token_hash, email, name, admin, expires_at) VALUES (${sha256(token)}, ${email}, ${name}, ${admin}, now() + interval '7 days')`;
@@ -114,6 +115,7 @@ export async function createInvite(email: string, name: string, admin = false): 
 
 /** Erster Admin beim allerersten Start (Installer setzt SHIPLI_ADMIN_*); sobald es einen User gibt, passiert nichts. */
 export async function createFirstAdmin(email: string, name: string, password: string): Promise<boolean> {
+  name = name.trim().toLowerCase();
   validateName('User', name);
   const hash = await hashPassword(password);
   const rows = await sql`
@@ -179,7 +181,7 @@ export async function register(
     if (blocked(key, MAX_REGISTRATIONS, now)) throw new Error('Zu viele Registrierungen von dieser Adresse, warte 15 Minuten');
     failures.set(key, [...(failures.get(key) ?? []), now]);
   }
-  const name = input.name.trim();
+  const name = input.name.trim().toLowerCase();
   if (mode === 'email') {
     const email = input.email.trim().toLowerCase();
     return { invite: await createInvite(email, name), email };

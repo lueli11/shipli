@@ -42,6 +42,13 @@ test('Einladung gilt nur einmal, Login danach mit Passwort', db, async () => {
   assert.equal(await login(`${name}@example.com`, 'falsches-passwort'), undefined);
 });
 
+test('Username mit Grossbuchstaben wird klein gespeichert', db, async () => {
+  const name = `t${suffix}-gross`;
+  const token = await createInvite(`${name}@example.com`, `  T${suffix}-Gross `);
+  assert.equal((await inviteByToken(token))?.name, name);
+  await assert.rejects(createInvite(`${name}2@example.com`, `t${suffix} gross`), /User/);
+});
+
 test('User sieht und deployt keine fremden Projekte', db, async () => {
   const [a, b] = [await newUser('a'), await newUser('b')];
   const id = await createProject(a, 'blog', 'https://github.com/lueli11/webseite');
